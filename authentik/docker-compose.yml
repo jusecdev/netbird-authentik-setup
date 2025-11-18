@@ -1,0 +1,82 @@
+services:
+  postgresql:
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: ${PG_DB:-authentik}
+      POSTGRES_PASSWORD: ${PG_PASS:?database password required}
+      POSTGRES_USER: ${PG_USER:-authentik}
+    healthcheck:
+      interval: 30s
+      retries: 5
+      start_period: 20s
+      test:
+        - CMD-SHELL
+        - pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}
+      timeout: 5s
+    image: docker.io/library/postgres:16-alpine
+    container_name: authentik-db
+    restart: unless-stopped
+    volumes:
+      - database:/var/lib/postgresql/data
+    networks:
+      - authentik_internal
+    
+  server:
+    command: server
+    container_name: authentik-server
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      AUTHENTIK_POSTGRESQL__HOST: postgresql
+      AUTHENTIK_POSTGRESQL__NAME: ${PG_DB:-authentik}
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${PG_PASS}
+      AUTHENTIK_POSTGRESQL__USER: ${PG_USER:-authentik}
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:?secret key required}
+    image: ${AUTHENTIK_IMAGE:-ghcr.io/goauthentik/server}:${AUTHENTIK_TAG:-2025.10.1}
+    #ports: übernimmt Caddy
+    #  - ${COMPOSE_PORT_HTTP:-9000}:9000
+    #  - ${COMPOSE_PORT_HTTPS:-9443}:9443
+    restart: unless-stopped
+    volumes:
+      - ./media:/media
+      - ./custom-templates:/templates
+    networks:
+      - authentik_internal
+      - caddy_net
+  worker:
+    command: worker
+    container_name: authentik-worker
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      AUTHENTIK_POSTGRESQL__HOST: postgresql
+      AUTHENTIK_POSTGRESQL__NAME: ${PG_DB:-authentik}
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${PG_PASS}
+      AUTHENTIK_POSTGRESQL__USER: ${PG_USER:-authentik}
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:?secret key required}
+    image: ${AUTHENTIK_IMAGE:-ghcr.io/goauthentik/server}:${AUTHENTIK_TAG:-2025.10.1}
+    restart: unless-stopped
+    user: root
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./media:/media
+      - ./certs:/certs
+      - ./custom-templates:/templates
+    networks:
+      - authentik_internal
+
+volumes:
+  database:
+    driver: local
+
+networks:
+  authentik_internal:
+  caddy_net:
+    external: true
