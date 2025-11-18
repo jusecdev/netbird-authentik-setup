@@ -8,3 +8,5 @@ caddy:
     volumes:
       - ./caddy_data:/data
       - ./Caddyfile:/etc/caddy/Caddyfile
+networks:
+  caddy_net:
