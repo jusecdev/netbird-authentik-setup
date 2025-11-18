@@ -1,6 +1,7 @@
 services:
   caddy:
       image: caddy
+      container_name: caddy
       restart: unless-stopped
       ports:
         - '443:443'
@@ -9,5 +10,8 @@ services:
       volumes:
         - ./caddy_data:/data
         - ./Caddyfile:/etc/caddy/Caddyfile
+      networks:
+        - caddy_net
 networks:
   caddy_net:
+    name: caddy_net
