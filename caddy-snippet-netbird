@@ -1,0 +1,10 @@
+caddy:
+    image: caddy
+    restart: unless-stopped
+    ports:
+      - '443:443'
+      - '443:443/udp'
+      - '80:80'
+    volumes:
+      - ./caddy_data:/data
+      - ./Caddyfile:/etc/caddy/Caddyfile
