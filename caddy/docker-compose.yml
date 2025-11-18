@@ -1,4 +1,4 @@
-service:
+services:
   caddy:
       image: caddy
       restart: unless-stopped
