@@ -1,0 +1,34 @@
+{
+  # Global options can be configured here if needed
+}
+
+# Security headers (optional)
+(security_headers) {
+  header * {
+    Strict-Transport-Security "max-age=3600"
+    X-Content-Type-Options "nosniff"
+    X-Frame-Options "SAMEORIGIN"
+    Referrer-Policy "strict-origin-when-cross-origin"
+    -Server
+  }
+}
+
+# NetBird (Dashboard, Management, Signal, Relay)
+${NETBIRD_DOMAIN} {
+  import security_headers
+
+  # Relay
+  reverse_proxy /relay* relay:${NETBIRD_RELAY_PORT}
+
+  # Signal
+  reverse_proxy /ws-proxy/signal* signal:${NETBIRD_SIGNAL_PORT}
+  reverse_proxy /signalexchange.SignalExchange/* h2c://signal:${NETBIRD_SIGNAL_PORT}
+
+  # Management
+  reverse_proxy /api/* management:${NETBIRD_MGMT_API_PORT}
+  reverse_proxy /ws-proxy/management* management:${NETBIRD_MGMT_API_PORT}
+  reverse_proxy /management.ManagementService/* h2c://management:${NETBIRD_MGMT_API_PORT}
+
+  # Dashboard
+  reverse_proxy /* dashboard:${NETBIRD_DASHBOARD_PORT}
+}
