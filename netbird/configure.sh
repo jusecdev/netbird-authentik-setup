@@ -195,12 +195,25 @@ fi
 artifacts_path="./artifacts"
 mkdir -p "$artifacts_path"
 
-# Bind mount base paths (directories will be created by Docker on first run)
-DATA_PATH="${DATA_PATH:-$artifacts_path/data}"
-MGMT_DATA_PATH="$DATA_PATH/mgmt"
-SIGNAL_DATA_PATH="$DATA_PATH/signal"
-LETSENCRYPT_DATA_PATH="$DATA_PATH/letsencrypt"
-POSTGRES_DATA_PATH="${POSTGRES_DATA_PATH:-$DATA_PATH/postgres}"
+###############################################################################
+# Prepare data directories inside ./artifacts
+###############################################################################
+
+# Base data root inside artifacts
+DATA_ROOT="$artifacts_path/data"
+
+MGMT_DATA_DIR="$DATA_ROOT/management"
+SIGNAL_DATA_DIR="$DATA_ROOT/signal"
+LETSENCRYPT_DATA_DIR="$DATA_ROOT/letsencrypt"
+# Important: we do NOT create postgres data dir here to avoid permission issues
+# POSTGRES_DATA_DIR="$DATA_ROOT/postgres"
+
+mkdir -p "$MGMT_DATA_DIR" "$SIGNAL_DATA_DIR" "$LETSENCRYPT_DATA_DIR"
+
+# Make sure config files exist in ./artifacts so Docker bind mounts a file, not a directory
+[ ! -f "$artifacts_path/management.json" ] && touch "$artifacts_path/management.json"
+[ ! -f "$artifacts_path/turnserver.conf" ] && touch "$artifacts_path/turnserver.conf"
+[ ! -f "$artifacts_path/Caddyfile" ] && touch "$artifacts_path/Caddyfile"
 
 export DATA_PATH MGMT_DATA_PATH SIGNAL_DATA_PATH LETSENCRYPT_DATA_PATH POSTGRES_DATA_PATH
 

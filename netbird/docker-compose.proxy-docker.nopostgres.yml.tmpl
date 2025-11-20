@@ -72,7 +72,7 @@ services:
     volumes:
       - $MGMT_DATA_PATH:/var/lib/netbird
       - $LETSENCRYPT_DATA_PATH:/etc/letsencrypt:ro
-      - ./artifacts/management.json:/etc/netbird/management.json
+      - ./management.json:/etc/netbird/management.json
     command: [
       "--port", "$NETBIRD_MGMT_API_PORT",
       "--log-file", "console",
@@ -92,7 +92,7 @@ services:
     <<: *default
     image: coturn/coturn:$COTURN_TAG
     volumes:
-      - ./artifacts/turnserver.conf:/etc/turnserver.conf:ro
+      - ./turnserver.conf:/etc/turnserver.conf:ro
     network_mode: host
     command:
       - -c /etc/turnserver.conf
