@@ -79,41 +79,62 @@ case "$DEPLOYMENT_MODE" in
 esac
 
 ########################################
+# Store engine: only sqlite or postgres
+########################################
+
+case "$NETBIRD_STORE_CONFIG_ENGINE" in
+  sqlite|postgres)
+    echo "Store engine: $NETBIRD_STORE_CONFIG_ENGINE"
+    ;;
+  *)
+    echo "Unsupported NETBIRD_STORE_CONFIG_ENGINE='$NETBIRD_STORE_CONFIG_ENGINE'."
+    echo "Only 'sqlite' and 'postgres' are supported."
+    exit 1
+    ;;
+esac
+
+########################################
 # Built-in Postgres support
 ########################################
-# If NETBIRD_STORE_CONFIG_ENGINE=postgres and no DSN is provided,
-# generate credentials and use an internal Postgres service at host 'postgres'.
+# If NETBIRD_STORE_CONFIG_ENGINE=postgres:
+#   - NETBIRD_USE_INTERNAL_POSTGRES=true  → internal postgres service in compose + auto DSN
+#   - NETBIRD_USE_INTERNAL_POSTGRES=false → NO postgres service in compose, DSN must be provided
 
+: "${NETBIRD_USE_INTERNAL_POSTGRES:=true}"
+
+# Defaults for internal Postgres
 : "${NETBIRD_POSTGRES_DB:=netbird}"
 : "${NETBIRD_POSTGRES_USER:=netbird}"
 
 if [[ -z "$NETBIRD_POSTGRES_PASSWORD" ]]; then
-  # Generate a URL-safe random password (no /, +, or =)
   NETBIRD_POSTGRES_PASSWORD=$(openssl rand -base64 32 | tr -d '/+=')
 fi
 
-export NETBIRD_POSTGRES_DB NETBIRD_POSTGRES_USER NETBIRD_POSTGRES_PASSWORD
+export NETBIRD_POSTGRES_DB NETBIRD_POSTGRES_USER NETBIRD_POSTGRES_PASSWORD NETBIRD_USE_INTERNAL_POSTGRES
 
 if [[ "$NETBIRD_STORE_CONFIG_ENGINE" == "postgres" ]]; then
-  if [[ -z "$NETBIRD_STORE_ENGINE_POSTGRES_DSN" ]]; then
-    NETBIRD_STORE_ENGINE_POSTGRES_DSN="host=postgres user=$NETBIRD_POSTGRES_USER password=$NETBIRD_POSTGRES_PASSWORD dbname=$NETBIRD_POSTGRES_DB port=5432 sslmode=disable"
-    echo "Postgres store enabled. Using internal Postgres instance with DSN:"
-    echo "  $NETBIRD_STORE_ENGINE_POSTGRES_DSN"
+  if [[ "$NETBIRD_USE_INTERNAL_POSTGRES" == "true" ]]; then
+    # Internal Postgres container, auto-generated DSN if not set
+    if [[ -z "$NETBIRD_STORE_ENGINE_POSTGRES_DSN" ]]; then
+      NETBIRD_STORE_ENGINE_POSTGRES_DSN="host=postgres user=$NETBIRD_POSTGRES_USER password=$NETBIRD_POSTGRES_PASSWORD dbname=$NETBIRD_POSTGRES_DB port=5432 sslmode=disable"
+      echo "Postgres store enabled. Using internal Postgres instance with DSN:"
+      echo "  $NETBIRD_STORE_ENGINE_POSTGRES_DSN"
+    else
+      echo "Postgres store enabled. Using custom DSN with internal Postgres service."
+    fi
+    export NETBIRD_STORE_ENGINE_POSTGRES_DSN
   else
-    echo "Postgres store enabled. Using external DSN from NETBIRD_STORE_ENGINE_POSTGRES_DSN."
+    # External Postgres: no internal Postgres service, DSN is required
+    if [[ -z "$NETBIRD_STORE_ENGINE_POSTGRES_DSN" ]]; then
+      echo "NETBIRD_STORE_CONFIG_ENGINE=postgres and NETBIRD_USE_INTERNAL_POSTGRES=false,"
+      echo "but NETBIRD_STORE_ENGINE_POSTGRES_DSN is not set."
+      echo "Please set NETBIRD_STORE_ENGINE_POSTGRES_DSN to point to your external Postgres instance."
+      exit 1
+    fi
+    echo "Postgres store enabled. Using external Postgres DSN:"
+    echo "  $NETBIRD_STORE_ENGINE_POSTGRES_DSN"
+    export NETBIRD_STORE_ENGINE_POSTGRES_DSN
   fi
-  export NETBIRD_STORE_ENGINE_POSTGRES_DSN
-fi
-
-# MySQL store engine check
-if [[ "$NETBIRD_STORE_CONFIG_ENGINE" == "mysql" ]]; then
-  if [[ -z "$NETBIRD_STORE_ENGINE_MYSQL_DSN" ]]; then
-    echo "Warning: NETBIRD_STORE_CONFIG_ENGINE=mysql but NETBIRD_STORE_ENGINE_MYSQL_DSN is not set."
-    echo "Please add the following line to your setup.env file:"
-    echo 'NETBIRD_STORE_ENGINE_MYSQL_DSN="<username>:<password>@tcp(127.0.0.1:3306)/<database>"'
-    exit 1
-  fi
-  export NETBIRD_STORE_ENGINE_MYSQL_DSN
 fi
 
 ########################################
@@ -184,10 +205,9 @@ POSTGRES_DATA_PATH="${POSTGRES_DATA_PATH:-$DATA_PATH/postgres}"
 export DATA_PATH MGMT_DATA_PATH SIGNAL_DATA_PATH LETSENCRYPT_DATA_PATH POSTGRES_DATA_PATH
 
 ########################################
-# OIDC configuration
+# OIDC configuration & backward compatibility
 ########################################
 
-# Backwards compatibility after migrating to generic OIDC with Auth0
 if [[ -z "${NETBIRD_AUTH_OIDC_CONFIGURATION_ENDPOINT}" ]]; then
   if [[ -z "${NETBIRD_AUTH0_DOMAIN}" ]]; then
     echo "NETBIRD_AUTH_OIDC_CONFIGURATION_ENDPOINT must be set in setup.env."
@@ -230,7 +250,6 @@ fi
 
 case "$DEPLOYMENT_MODE" in
   standalone)
-    # Standalone mode: NetBird terminates TLS itself (LetsEncrypt / certs)
     : "${NETBIRD_DISABLE_LETSENCRYPT:=false}"
     export NETBIRD_DISABLE_LETSENCRYPT
 
@@ -242,36 +261,29 @@ case "$DEPLOYMENT_MODE" in
     ;;
 
   proxy_docker|proxy_external|proxy_docker_caddy)
-    # Reverse proxy modes: TLS is terminated by the proxy
     NETBIRD_DISABLE_LETSENCRYPT=true
     export NETBIRD_DISABLE_LETSENCRYPT
 
     : "${NETBIRD_EXTERNAL_TLS_PORT:=443}"
 
-    # Internal ports where containers listen
     : "${NETBIRD_DASHBOARD_INTERNAL_PORT:=80}"
     : "${NETBIRD_SIGNAL_INTERNAL_PORT:=80}"
     : "${NETBIRD_RELAY_INTERNAL_PORT:=33080}"
     : "${NETBIRD_MGMT_INTERNAL_PORT:=${NETBIRD_MGMT_API_PORT:-33073}}"
 
-    # Public endpoints as seen by clients (through reverse proxy)
     export NETBIRD_DASHBOARD_ENDPOINT="https://$NETBIRD_DOMAIN:${NETBIRD_EXTERNAL_TLS_PORT}"
     export NETBIRD_SIGNAL_ENDPOINT="https://$NETBIRD_DOMAIN:${NETBIRD_EXTERNAL_TLS_PORT}"
     export NETBIRD_RELAY_ENDPOINT="rels://$NETBIRD_DOMAIN:${NETBIRD_EXTERNAL_TLS_PORT}/relay"
     export NETBIRD_MGMT_API_ENDPOINT="https://$NETBIRD_DOMAIN:${NETBIRD_EXTERNAL_TLS_PORT}"
 
-    # Public port for signal clients connect to (proxy’s TLS port)
     export NETBIRD_SIGNAL_PUBLIC_PORT="$NETBIRD_EXTERNAL_TLS_PORT"
-    # Signal protocol for management.json (HTTPS through proxy)
     export NETBIRD_SIGNAL_PROTOCOL="https"
 
-    # Map internal ports back to original vars used in templates
     export NETBIRD_DASHBOARD_PORT="$NETBIRD_DASHBOARD_INTERNAL_PORT"
     export NETBIRD_SIGNAL_PORT="$NETBIRD_SIGNAL_INTERNAL_PORT"
     export NETBIRD_RELAY_PORT="$NETBIRD_RELAY_INTERNAL_PORT"
     export NETBIRD_MGMT_API_PORT="$NETBIRD_MGMT_INTERNAL_PORT"
 
-    # In reverse proxy mode, in-container certs are usually not used
     unset NETBIRD_LETSENCRYPT_DOMAIN
     unset NETBIRD_MGMT_API_CERT_FILE
     unset NETBIRD_MGMT_API_CERT_KEY_FILE
@@ -284,7 +296,6 @@ case "$DEPLOYMENT_MODE" in
     ;;
 esac
 
-# Default public signal port if not set by the mode logic
 : "${NETBIRD_SIGNAL_PUBLIC_PORT:=$NETBIRD_SIGNAL_PORT}"
 export NETBIRD_SIGNAL_PUBLIC_PORT
 
@@ -292,12 +303,10 @@ export NETBIRD_SIGNAL_PUBLIC_PORT
 # IDP management extra config
 ########################################
 
-if [ -n "$NETBIRD_MGMT_IDP" ]; then
+if [ -n "$NETBIRD_MGMT_IDP" ] && [ "$NETBIRD_MGMT_IDP" != "none" ]; then
   EXTRA_CONFIG={}
 
-  # Extract extra config from all env vars prefixed with NETBIRD_IDP_MGMT_EXTRA_
   for var in ${!NETBIRD_IDP_MGMT_EXTRA_*}; do
-    # Convert key from SNAKE_CASE to camelCase
     key=$(
       echo "${var#NETBIRD_IDP_MGMT_EXTRA_}" | awk -F "_" \
         '{for (i=1; i<=NF; i++) {output=output substr($i,1,1) tolower(substr($i,2))} print output}'
@@ -371,24 +380,30 @@ if test -f "${artifacts_path}/turnserver.conf"; then
 fi
 
 ########################################
-# Render templates
+# Render templates (with/without internal Postgres)
 ########################################
 
-compose_tmpl="docker-compose.standalone.yml.tmpl"
+compose_base=""
 case "$DEPLOYMENT_MODE" in
   standalone)
-    compose_tmpl="docker-compose.standalone.yml.tmpl"
+    compose_base="docker-compose.standalone"
     ;;
   proxy_docker)
-    compose_tmpl="docker-compose.proxy-docker.yml.tmpl"
+    compose_base="docker-compose.proxy-docker"
     ;;
   proxy_external)
-    compose_tmpl="docker-compose.proxy-external.yml.tmpl"
+    compose_base="docker-compose.proxy-external"
     ;;
   proxy_docker_caddy)
-    compose_tmpl="docker-compose.proxy-docker-caddy.yml.tmpl"
+    compose_base="docker-compose.proxy-docker-caddy"
     ;;
 esac
+
+if [[ "$NETBIRD_STORE_CONFIG_ENGINE" == "postgres" && "$NETBIRD_USE_INTERNAL_POSTGRES" == "true" ]]; then
+  compose_tmpl="${compose_base}.with-postgres.yml.tmpl"
+else
+  compose_tmpl="${compose_base}.nopostgres.yml.tmpl"
+fi
 
 envsubst <"$compose_tmpl" >"$artifacts_path/docker-compose.yml"
 envsubst <management.json.tmpl | jq . >"$artifacts_path/management.json"
@@ -402,7 +417,7 @@ fi
 
 echo ""
 echo "Generated files in $artifacts_path:"
-echo "  - docker-compose.yml"
+echo "  - docker-compose.yml (from $compose_tmpl)"
 echo "  - management.json"
 echo "  - turnserver.conf"
 if [[ "$DEPLOYMENT_MODE" == "proxy_docker_caddy" ]]; then
