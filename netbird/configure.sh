@@ -199,16 +199,23 @@ mkdir -p "$artifacts_path"
 # Prepare data directories inside ./artifacts
 ###############################################################################
 
-# Base data root inside artifacts
-DATA_ROOT="$artifacts_path/data"
+# Base data root as seen from INSIDE the ./artifacts directory.
+# In docker-compose.yml.tmpl verwenden wir z.B.:
+#   - $SIGNAL_DATA_PATH:/var/lib/netbird
+# und $SIGNAL_DATA_PATH ist relativ zu ./artifacts
+DATA_PATH="${DATA_PATH:-./data}"
 
-MGMT_DATA_DIR="$DATA_ROOT/management"
-SIGNAL_DATA_DIR="$DATA_ROOT/signal"
-LETSENCRYPT_DATA_DIR="$DATA_ROOT/letsencrypt"
-# Important: we do NOT create postgres data dir here to avoid permission issues
-# POSTGRES_DATA_DIR="$DATA_ROOT/postgres"
+# Paths used in docker-compose (relative to ./artifacts)
+MGMT_DATA_PATH="${MGMT_DATA_PATH:-${DATA_PATH}/management}"
+SIGNAL_DATA_PATH="${SIGNAL_DATA_PATH:-${DATA_PATH}/signal}"
+LETSENCRYPT_DATA_PATH="${LETSENCRYPT_DATA_PATH:-${DATA_PATH}/letsencrypt}"
+POSTGRES_DATA_PATH="${POSTGRES_DATA_PATH:-${DATA_PATH}/postgres}"
 
-mkdir -p "$MGMT_DATA_DIR" "$SIGNAL_DATA_DIR" "$LETSENCRYPT_DATA_DIR"
+# Create the host directories (except Postgres dir itself, to avoid perms issues)
+mkdir -p \
+  "${artifacts_path}/${MGMT_DATA_PATH}" \
+  "${artifacts_path}/${SIGNAL_DATA_PATH}" \
+  "${artifacts_path}/${LETSENCRYPT_DATA_PATH}"
 
 # Make sure config files exist in ./artifacts so Docker bind mounts a file, not a directory
 [ ! -f "$artifacts_path/management.json" ] && touch "$artifacts_path/management.json"
