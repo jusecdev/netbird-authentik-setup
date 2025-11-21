@@ -18,7 +18,7 @@ services:
     container_name: authentik-db
     restart: unless-stopped
     volumes:
-      - database:/var/lib/postgresql/data
+      - ./database:/var/lib/postgresql/data
     networks:
       - authentik_internal
     
@@ -71,10 +71,6 @@ services:
       - ./custom-templates:/templates
     networks:
       - authentik_internal
-
-volumes:
-  database:
-    driver: local
 
 networks:
   authentik_internal:
