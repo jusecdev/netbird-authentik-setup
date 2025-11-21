@@ -62,6 +62,154 @@ if [[ "x-$NETBIRD_DOMAIN" == "x-" ]]; then
 fi
 
 ########################################
+# Helper: generate Caddy snippet (proxy_docker)
+########################################
+
+generate_caddy_snippet_proxy_docker() {
+  cat <<EOF
+# NetBird (Caddy in Docker, shared network: ${NETBIRD_REVERSE_PROXY_NETWORK})
+${NETBIRD_DOMAIN} {
+  import security_headers  # remove if not defined in your Caddyfile
+
+  # Relay
+  reverse_proxy /relay* relay:${NETBIRD_RELAY_PORT}
+
+  # Signal
+  reverse_proxy /ws-proxy/signal* signal:${NETBIRD_SIGNAL_PORT}
+  reverse_proxy /signalexchange.SignalExchange/* h2c://signal:${NETBIRD_SIGNAL_PORT}
+
+  # Management
+  reverse_proxy /api/* management:${NETBIRD_MGMT_API_PORT}
+  reverse_proxy /ws-proxy/management* management:${NETBIRD_MGMT_API_PORT}
+  reverse_proxy /management.ManagementService/* h2c://management:${NETBIRD_MGMT_API_PORT}
+
+  # Dashboard
+  reverse_proxy /* dashboard:${NETBIRD_DASHBOARD_PORT}
+}
+EOF
+}
+
+########################################
+# Helper: find Caddyfile
+########################################
+
+find_caddyfile_path() {
+  # Try some common locations relative to this script
+  local script_dir c
+  script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+  local candidates=(
+    "$script_dir/Caddyfile"
+    "$script_dir/../Caddyfile"
+    "$script_dir/../caddy/Caddyfile"
+    "/etc/caddy/Caddyfile"
+    "/opt/caddy/Caddyfile"
+  )
+
+  local found=()
+  for c in "${candidates[@]}"; do
+    if [[ -f "$c" ]]; then
+      found+=("$c")
+    fi
+  done
+
+  if (( ${#found[@]} == 1 )); then
+    echo "${found[0]}"
+    return 0
+  fi
+
+  if (( ${#found[@]} > 1 )); then
+    echo "Multiple Caddyfile candidates found:" >&2
+    local i=1
+    for c in "${found[@]}"; do
+      echo "  [$i] $c" >&2
+      ((i++))
+    done
+    read -rp "Select Caddyfile by number (or leave empty to abort): " sel
+    if [[ -n "$sel" && "$sel" =~ ^[0-9]+$ ]] && (( sel >= 1 && sel <= ${#found[@]} )); then
+      echo "${found[$((sel-1))]}"
+      return 0
+    else
+      echo ""  # nothing
+      return 1
+    fi
+  fi
+
+  # None found
+  echo ""  # nothing
+  return 1
+}
+
+########################################
+# Helper: append NetBird snippet to Caddyfile
+########################################
+
+append_snippet_to_caddyfile() {
+  local caddyfile="$1"
+  local snippet="$2"
+
+  if [[ -z "$caddyfile" || -z "$snippet" ]]; then
+    echo "append_snippet_to_caddyfile: missing arguments" >&2
+    return 1
+  fi
+
+  if [[ ! -f "$caddyfile" ]]; then
+    echo "Caddyfile '$caddyfile' does not exist." >&2
+    return 1
+  fi
+
+  # Remove old NetBird block if present
+  sed -i '/### BEGIN NETBIRD AUTOCONFIG ###/,/### END NETBIRD AUTOCONFIG ###/d' "$caddyfile"
+
+  {
+    echo ""
+    echo "### BEGIN NETBIRD AUTOCONFIG ###"
+    printf "%s\n" "$snippet"
+    echo "### END NETBIRD AUTOCONFIG ###"
+  } >> "$caddyfile"
+
+  echo "Updated Caddyfile: $caddyfile"
+  return 0
+}
+
+########################################
+# Helper: try to reload/restart Caddy
+########################################
+
+restart_caddy_for_caddyfile() {
+  local caddyfile="$1"
+
+  if [[ -z "$caddyfile" ]]; then
+    echo "restart_caddy_for_caddyfile: missing Caddyfile path" >&2
+    return 1
+  fi
+
+  local caddy_dir
+  caddy_dir="$(dirname "$caddyfile")"
+
+  echo "Trying to reload/restart Caddy for config in: $caddy_dir"
+
+  # Case 1: Caddy running in Docker with docker compose
+  if command -v docker >/dev/null 2>&1; then
+    if command -v docker compose >/dev/null 2>&1 && [[ -f "$caddy_dir/docker-compose.yml" ]]; then
+      (cd "$caddy_dir" && docker compose restart caddy) && return 0
+    fi
+    if command -v docker-compose >/dev/null 2>&1 && [[ -f "$caddy_dir/docker-compose.yml" ]]; then
+      (cd "$caddy_dir" && docker-compose restart caddy) && return 0
+    fi
+  fi
+
+  # Case 2: Caddy running as system service
+  if command -v systemctl >/dev/null 2>&1; then
+    sudo systemctl reload caddy && return 0
+    sudo systemctl restart caddy && return 0
+  fi
+
+  echo "Could not automatically reload/restart Caddy. Please restart it manually."
+  return 1
+}
+
+########################################
 # Deployment mode
 ########################################
 
@@ -448,96 +596,56 @@ echo "You can now start NetBird with:"
 echo "  docker compose -f $artifacts_path/docker-compose.yml up -d"
 
 ########################################
-# Print Caddy snippets for reverse proxy modes
+# Optional: integrate NetBird into Caddy (proxy_docker only)
 ########################################
 
-case "$DEPLOYMENT_MODE" in
-  proxy_external)
-    cat <<EOF
+if [[ "$DEPLOYMENT_MODE" == "proxy_docker" ]]; then
+  echo ""
+  echo "NetBird is configured to run behind Caddy in Docker (proxy_docker mode)."
 
-===============================================================================
-CADDY CONFIG SNIPPET FOR NETBIRD (proxy_external)
-===============================================================================
+  # Build snippet for Caddy
+  NETBIRD_CADDY_SNIPPET="$(generate_caddy_snippet_proxy_docker)"
 
-# NetBird Dashboard & Services
-${NETBIRD_DOMAIN} {
-  import security_headers  # remove if you don't use this in your Caddyfile
+  echo ""
+  echo "---------------------------------------------------------------------"
+  echo "Caddy snippet for NetBird (Caddy in Docker, network: ${NETBIRD_REVERSE_PROXY_NETWORK}):"
+  echo "---------------------------------------------------------------------"
+  printf "%s\n" "$NETBIRD_CADDY_SNIPPET"
+  echo "---------------------------------------------------------------------"
+  echo ""
 
-  # Relay
-  reverse_proxy /relay* {NETBIRD_BACKEND_HOST}:${NETBIRD_RELAY_PORT}
+  read -rp "Do you want me to try to append this snippet to an existing Caddyfile now? [y/N]: " ADD_TO_CADDY
+  ADD_TO_CADDY=${ADD_TO_CADDY:-N}
 
-  # Signal
-  reverse_proxy /ws-proxy/signal* {NETBIRD_BACKEND_HOST}:${NETBIRD_SIGNAL_PORT}
-  reverse_proxy /signalexchange.SignalExchange/* h2c://{NETBIRD_BACKEND_HOST}:${NETBIRD_SIGNAL_PORT}
+  if [[ "$ADD_TO_CADDY" =~ ^[Yy]$ ]]; then
+    CADDYFILE_PATH="$(find_caddyfile_path)"
 
-  # Management
-  reverse_proxy /api/* {NETBIRD_BACKEND_HOST}:${NETBIRD_MGMT_API_PORT}
-  reverse_proxy /ws-proxy/management* {NETBIRD_BACKEND_HOST}:${NETBIRD_MGMT_API_PORT}
-  reverse_proxy /management.ManagementService/* h2c://{NETBIRD_BACKEND_HOST}:${NETBIRD_MGMT_API_PORT}
+    if [[ -z "$CADDYFILE_PATH" ]]; then
+      echo "Could not auto-detect a Caddyfile on this host."
+      read -rp "Please enter the full path to your Caddyfile (or leave empty to abort): " MANUAL_CADDYFILE
+      if [[ -n "$MANUAL_CADDYFILE" ]]; then
+        CADDYFILE_PATH="$MANUAL_CADDYFILE"
+      else
+        echo "Skipping automatic Caddy integration."
+      fi
+    fi
 
-  # Dashboard
-  reverse_proxy /* {NETBIRD_BACKEND_HOST}:${NETBIRD_DASHBOARD_PORT}
-}
-
-Notes:
-- Replace {NETBIRD_BACKEND_HOST} with the host/IP where NetBird is reachable
-  from Caddy (e.g. "127.0.0.1" if you published those ports).
-- Ports used above:
-    NETBIRD_RELAY_PORT    = ${NETBIRD_RELAY_PORT}
-    NETBIRD_SIGNAL_PORT   = ${NETBIRD_SIGNAL_PORT}
-    NETBIRD_MGMT_API_PORT = ${NETBIRD_MGMT_API_PORT}
-    NETBIRD_DASHBOARD_PORT= ${NETBIRD_DASHBOARD_PORT}
-- Make sure your Caddyfile defines (security_headers) or remove that line.
-
-===============================================================================
-EOF
-    ;;
-
-  proxy_docker)
-    cat <<EOF
-
-===============================================================================
-CADDY CONFIG SNIPPET FOR NETBIRD (proxy_docker)
-===============================================================================
-
-IMPORTANT:
-- Your Caddy container must be attached to the Docker network:
-    ${NETBIRD_REVERSE_PROXY_NETWORK}
-- Your NetBird containers must also be attached to the same network.
-- In this mode, NetBird services do NOT need to expose ports to the host;
-  Caddy reaches them via their Docker service names.
-
-# NetBird Dashboard & Services
-${NETBIRD_DOMAIN} {
-  import security_headers  # remove if you don't use this in your Caddyfile
-
-  # Relay
-  reverse_proxy /relay* relay:${NETBIRD_RELAY_PORT}
-
-  # Signal
-  reverse_proxy /ws-proxy/signal* signal:${NETBIRD_SIGNAL_PORT}
-  reverse_proxy /signalexchange.SignalExchange/* h2c://signal:${NETBIRD_SIGNAL_PORT}
-
-  # Management
-  reverse_proxy /api/* management:${NETBIRD_MGMT_API_PORT}
-  reverse_proxy /ws-proxy/management* management:${NETBIRD_MGMT_API_PORT}
-  reverse_proxy /management.ManagementService/* h2c://management:${NETBIRD_MGMT_API_PORT}
-
-  # Dashboard
-  reverse_proxy /* dashboard:${NETBIRD_DASHBOARD_PORT}
-}
-
-Notes:
-- Service names "relay", "signal", "management", "dashboard" must match the
-  service names in your NetBird docker-compose.yml.
-- Ports used above (internal container ports):
-    NETBIRD_RELAY_PORT    = ${NETBIRD_RELAY_PORT}
-    NETBIRD_SIGNAL_PORT   = ${NETBIRD_SIGNAL_PORT}
-    NETBIRD_MGMT_API_PORT = ${NETBIRD_MGMT_API_PORT}
-    NETBIRD_DASHBOARD_PORT= ${NETBIRD_DASHBOARD_PORT}
-- Caddy itself exposes :80 and :443 to the host; NetBird services stay internal.
-
-===============================================================================
-EOF
-    ;;
-esac
+    if [[ -n "$CADDYFILE_PATH" ]]; then
+      echo "Using Caddyfile: $CADDYFILE_PATH"
+      if append_snippet_to_caddyfile "$CADDYFILE_PATH" "$NETBIRD_CADDY_SNIPPET"; then
+        echo ""
+        read -rp "Try to reload/restart Caddy now? [y/N]: " RESTART_CADDY
+        RESTART_CADDY=${RESTART_CADDY:-N}
+        if [[ "$RESTART_CADDY" =~ ^[Yy]$ ]]; then
+          restart_caddy_for_caddyfile "$CADDYFILE_PATH" || true
+        else
+          echo "You chose not to restart Caddy automatically. Please reload it manually."
+        fi
+      else
+        echo "Failed to update Caddyfile. Please add the snippet manually."
+      fi
+    fi
+  else
+    echo "Skipping automatic Caddy integration. You can copy the snippet above into your Caddyfile manually."
+  fi
+fi
