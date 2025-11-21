@@ -446,3 +446,98 @@ fi
 echo ""
 echo "You can now start NetBird with:"
 echo "  docker compose -f $artifacts_path/docker-compose.yml up -d"
+
+########################################
+# Print Caddy snippets for reverse proxy modes
+########################################
+
+case "$DEPLOYMENT_MODE" in
+  proxy_external)
+    cat <<EOF
+
+===============================================================================
+CADDY CONFIG SNIPPET FOR NETBIRD (proxy_external)
+===============================================================================
+
+# NetBird Dashboard & Services
+${NETBIRD_DOMAIN} {
+  import security_headers  # remove if you don't use this in your Caddyfile
+
+  # Relay
+  reverse_proxy /relay* {NETBIRD_BACKEND_HOST}:${NETBIRD_RELAY_PORT}
+
+  # Signal
+  reverse_proxy /ws-proxy/signal* {NETBIRD_BACKEND_HOST}:${NETBIRD_SIGNAL_PORT}
+  reverse_proxy /signalexchange.SignalExchange/* h2c://{NETBIRD_BACKEND_HOST}:${NETBIRD_SIGNAL_PORT}
+
+  # Management
+  reverse_proxy /api/* {NETBIRD_BACKEND_HOST}:${NETBIRD_MGMT_API_PORT}
+  reverse_proxy /ws-proxy/management* {NETBIRD_BACKEND_HOST}:${NETBIRD_MGMT_API_PORT}
+  reverse_proxy /management.ManagementService/* h2c://{NETBIRD_BACKEND_HOST}:${NETBIRD_MGMT_API_PORT}
+
+  # Dashboard
+  reverse_proxy /* {NETBIRD_BACKEND_HOST}:${NETBIRD_DASHBOARD_PORT}
+}
+
+Notes:
+- Replace {NETBIRD_BACKEND_HOST} with the host/IP where NetBird is reachable
+  from Caddy (e.g. "127.0.0.1" if you published those ports).
+- Ports used above:
+    NETBIRD_RELAY_PORT    = ${NETBIRD_RELAY_PORT}
+    NETBIRD_SIGNAL_PORT   = ${NETBIRD_SIGNAL_PORT}
+    NETBIRD_MGMT_API_PORT = ${NETBIRD_MGMT_API_PORT}
+    NETBIRD_DASHBOARD_PORT= ${NETBIRD_DASHBOARD_PORT}
+- Make sure your Caddyfile defines (security_headers) or remove that line.
+
+===============================================================================
+EOF
+    ;;
+
+  proxy_docker)
+    cat <<EOF
+
+===============================================================================
+CADDY CONFIG SNIPPET FOR NETBIRD (proxy_docker)
+===============================================================================
+
+IMPORTANT:
+- Your Caddy container must be attached to the Docker network:
+    ${NETBIRD_REVERSE_PROXY_NETWORK}
+- Your NetBird containers must also be attached to the same network.
+- In this mode, NetBird services do NOT need to expose ports to the host;
+  Caddy reaches them via their Docker service names.
+
+# NetBird Dashboard & Services
+${NETBIRD_DOMAIN} {
+  import security_headers  # remove if you don't use this in your Caddyfile
+
+  # Relay
+  reverse_proxy /relay* relay:${NETBIRD_RELAY_PORT}
+
+  # Signal
+  reverse_proxy /ws-proxy/signal* signal:${NETBIRD_SIGNAL_PORT}
+  reverse_proxy /signalexchange.SignalExchange/* h2c://signal:${NETBIRD_SIGNAL_PORT}
+
+  # Management
+  reverse_proxy /api/* management:${NETBIRD_MGMT_API_PORT}
+  reverse_proxy /ws-proxy/management* management:${NETBIRD_MGMT_API_PORT}
+  reverse_proxy /management.ManagementService/* h2c://management:${NETBIRD_MGMT_API_PORT}
+
+  # Dashboard
+  reverse_proxy /* dashboard:${NETBIRD_DASHBOARD_PORT}
+}
+
+Notes:
+- Service names "relay", "signal", "management", "dashboard" must match the
+  service names in your NetBird docker-compose.yml.
+- Ports used above (internal container ports):
+    NETBIRD_RELAY_PORT    = ${NETBIRD_RELAY_PORT}
+    NETBIRD_SIGNAL_PORT   = ${NETBIRD_SIGNAL_PORT}
+    NETBIRD_MGMT_API_PORT = ${NETBIRD_MGMT_API_PORT}
+    NETBIRD_DASHBOARD_PORT= ${NETBIRD_DASHBOARD_PORT}
+- Caddy itself exposes :80 and :443 to the host; NetBird services stay internal.
+
+===============================================================================
+EOF
+    ;;
+esac
