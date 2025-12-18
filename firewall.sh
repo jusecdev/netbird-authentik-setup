@@ -70,9 +70,8 @@ ufw allow 443/tcp
 # HTTP/3 (QUIC)
 ufw allow 443/udp
 
-# NetBird Relay
+# NetBird Turn
 ufw allow 3478/udp
-ufw allow 49152:65535/udp
 
 #######################################
 # 5. UFW aktivieren
@@ -122,7 +121,6 @@ ufw route allow proto udp from any to any port 443
 
 # NetBird Relay / STUN / TURN zu Containern
 ufw route allow proto udp from any to any port 3478
-ufw route allow proto udp from any to any port 49152:65535
 
 echo
 echo "[*] Fertig!"
@@ -131,5 +129,5 @@ ufw status verbose
 echo
 echo "[Hinweis]"
 echo "- IPv6 ist für UFW deaktiviert, d.h. praktisch komplett geblockt."
-echo "- Eingehend sind NUR diese Ports offen: 22/tcp, 80/tcp, 443/tcp, 443/udp, 3478/udp, 49152-65535/udp."
+echo "- Eingehend sind NUR diese Ports offen: 22/tcp, 80/tcp, 443/tcp, 443/udp, 3478/udp."
 echo "- Docker ist über ufw-docker hinter UFW gehängt; 'ufw route allow' regelt den Zugriff auf Container."
