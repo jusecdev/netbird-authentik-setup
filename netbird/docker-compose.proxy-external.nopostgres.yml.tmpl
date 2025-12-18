@@ -39,7 +39,7 @@ services:
       - $SIGNAL_DATA_PATH:/var/lib/netbird
       - $LETSENCRYPT_DATA_PATH:/etc/letsencrypt:ro
     ports:
-      - ${NETBIRD_SIGNAL_PORT:-80}:80
+      - ${NETBIRD_SIGNAL_PORT:-10000}:80
     command: [
       "--log-file", "console"
     ]
