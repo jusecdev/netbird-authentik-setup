@@ -86,7 +86,7 @@ ufw --force enable
 
 if ! command -v ufw-docker >/dev/null 2>&1; then
   echo "[*] Installiere ufw-docker Helper..."
-  wget -O /usr/local/bin/ufw-docker https://github.com/chaifeng/ufw-docker/raw/master/ufw-docker
+  wget -4 -O /usr/local/bin/ufw-docker https://github.com/chaifeng/ufw-docker/raw/master/ufw-docker
   chmod +x /usr/local/bin/ufw-docker
 else
   echo "[*] ufw-docker ist bereits installiert."
